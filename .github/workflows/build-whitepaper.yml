@@ -1,0 +1,95 @@
+name: Build whitepaper PDF and LaTeX
+
+on:
+  push:
+    branches: ["whitepaper-v0.1"]
+    paths:
+      - "whitepaper.md"
+      - ".github/workflows/build-whitepaper.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: whitepaper-pdf
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Fail on unresolved merge-conflict markers
+        run: |
+          if grep -nE '^(<<<<<<<|>>>>>>>)' whitepaper.md; then
+            echo "::error::Unresolved merge-conflict markers in whitepaper.md"
+            exit 1
+          fi
+
+      - name: Derive version info
+        id: version
+        run: |
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(git show -s --format=%cs HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pandoc and LaTeX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pandoc \
+            texlive-xetex \
+            texlive-latex-recommended \
+            texlive-latex-extra \
+            texlive-fonts-recommended \
+            lmodern
+
+      - name: Prepare LaTeX header
+        run: |
+          cat > build-header.tex <<'TEX'
+          \usepackage{etoolbox}
+          \AtBeginEnvironment{longtable}{\footnotesize}
+          TEX
+
+      - name: Build the LaTeX source
+        run: |
+          pandoc whitepaper.md \
+            --from gfm \
+            --standalone \
+            --include-in-header=build-header.tex \
+            -V geometry:margin=1in \
+            -V colorlinks=true \
+            -V linkcolor=blue \
+            -V urlcolor=blue \
+            -o OTAS-Whitepaper-draft.tex
+
+      - name: Build the PDF
+        run: |
+          pandoc whitepaper.md \
+            --from gfm \
+            --pdf-engine=xelatex \
+            --include-in-header=build-header.tex \
+            -V geometry:margin=1in \
+            -V colorlinks=true \
+            -V linkcolor=blue \
+            -V urlcolor=blue \
+            -o OTAS-Whitepaper-draft.pdf
+
+      - name: Publish PDF and LaTeX to the rolling draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: draft-latest
+          name: OTAS Whitepaper (latest draft)
+          prerelease: true
+          files: |
+            OTAS-Whitepaper-draft.pdf
+            OTAS-Whitepaper-draft.tex
+          body: |
+            Automatically built from `whitepaper.md`.
+            Commit `${{ steps.version.outputs.sha }}` (${{ steps.version.outputs.date }}).
+
+            Assets:
+            - `OTAS-Whitepaper-draft.pdf` — rendered PDF
+            - `OTAS-Whitepaper-draft.tex` — generated LaTeX source
